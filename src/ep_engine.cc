@@ -2134,68 +2134,9 @@ cb::EngineErrorItemPair EventuallyPersistentEngine::get_if(const void* cookie,
 
     auto* handle = reinterpret_cast<ENGINE_HANDLE*>(this);
 
-    // Fetch an item from the hashtable (without trying to schedule a bg-fetch
-    // and pass it through the filter. If the filter accepts the document
-    // based on the metadata, return the document. If the document's data
-    // isn't resident we run another iteration in the loop and retries the
-    // action but this time we _do_ schedule a bg-fetch.
-    for (int ii = 0; ii < 2; ++ii) {
-        auto options = static_cast<get_options_t>(HONOR_STATES |
-                                                  TRACK_REFERENCE |
-                                                  DELETE_TEMP |
-                                                  HIDE_LOCKED_CAS |
-                                                  GET_DELETED_VALUE |
-                                                  ALLOW_META_ONLY);
-        if (ii == 1 || kvBucket->getItemEvictionPolicy() == FULL_EVICTION) {
-            options = static_cast<get_options_t>(int(options) | QUEUE_BG_FETCH);
-        }
-
-        BlockTimer timer(&stats.getCmdHisto);
-        GetValue gv(kvBucket->get(key, vbucket, cookie, options));
-        ENGINE_ERROR_CODE status = gv.getStatus();
-
-        switch (status) {
-        case ENGINE_SUCCESS:
-            break;
-
-        case ENGINE_KEY_ENOENT: // FALLTHROUGH
-        case ENGINE_NOT_MY_VBUCKET: // FALLTHROUGH
-            if (isDegradedMode()) {
-                status = ENGINE_TMPFAIL;
-            }
-            // FALLTHROUGH
-        default:
-            return std::make_pair(cb::engine_errc(status),
-                                  cb::unique_item_ptr{nullptr,
-                                                      cb::ItemDeleter{handle}});
-        }
-
-        auto* item = gv.getValue();
-        cb::unique_item_ptr ret{item, cb::ItemDeleter{handle}};
-
-        const RCPtr<VBucket> vb = getKVBucket()->getVBucket(vbucket);
-        const uint64_t vb_uuid = vb ? vb->failovers->getLatestUUID() : 0;
-
-        // Currently
-        if (filter(item->toItemInfo(vb_uuid))) {
-            if (!gv.isPartial()) {
-                return std::make_pair(cb::engine_errc::success,
-                               cb::unique_item_ptr{ret.release(),
-                                                   cb::ItemDeleter{handle}});
-            }
-            // We want this item, but we need to fetch it off disk
-        } else {
-            // the client don't care about this thing..
-            ret.reset(nullptr);
-            return std::make_pair(cb::engine_errc::success,
-                                  cb::unique_item_ptr{ret.release(),
-                                                      cb::ItemDeleter{handle}});
-        }
-    }
-
-    // It should not be possible to get as the second iteration in the loop
-    // SHOULD handle backround fetches an the item should NOT be partial!
-    throw std::logic_error("EventuallyPersistentEngine::get_if: loop terminated");
+    return std::make_pair(cb::engine_errc::no_such_key,
+                          cb::unique_item_ptr{nullptr,
+                                              cb::ItemDeleter{handle}});
 }
 
 ENGINE_ERROR_CODE EventuallyPersistentEngine::get_locked(const void* cookie,
